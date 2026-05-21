@@ -198,12 +198,55 @@ with st.sidebar:
     st.markdown("---")
     sel_cats = st.multiselect("🎯 Categories", CAT_ORDER, default=CAT_ORDER)
     st.markdown("---")
+
+    # Account State filter
+    st.markdown("### 📂 Account Status")
+    state_options = ["Open", "Validated", "Submitted", "Cancelled"]
+    sel_states = st.multiselect(
+        "Account State",
+        options=state_options,
+        default=state_options,
+        help="Open = active · Validated = closed & approved · Submitted = pending · Cancelled",
+        label_visibility="collapsed"
+    )
+
+    st.markdown("---")
+
+    # Payment status filter
+    st.markdown("### 💳 Payment Status")
+    payment_options = ["✅ Fully Paid", "📄 Invoiced (Not Paid)", "⏳ Not Yet Invoiced"]
+    sel_payment = st.multiselect(
+        "Payment Status",
+        options=payment_options,
+        default=payment_options,
+        label_visibility="collapsed",
+        help="Paid = Sale Fully Paid Date exists · Invoiced = Sale Fully Invoiced Date exists"
+    )
+
+    st.markdown("---")
     st.caption("Deviation = (Real − Theo) / |Theo| · 5% threshold per project")
 
 df = df_all.copy()
-if sel_years: df = df[df["Year"].isin(sel_years)]
-if only_sms:  df = df[df["Paid SM Bool"]]
-if sel_cats:  df = df[df["Category"].isin(sel_cats)]
+if sel_years:   df = df[df["Year"].isin(sel_years)]
+if only_sms:    df = df[df["Paid SM Bool"]]
+if sel_cats:    df = df[df["Category"].isin(sel_cats)]
+
+# State filter
+if sel_states:  df = df[df["State"].isin(sel_states)]
+
+# Payment status filter
+def get_payment_status(row):
+    if pd.notna(row["Sale Fully Paid Date"]):
+        return "✅ Fully Paid"
+    elif pd.notna(row["Sale Fully Invoiced Date"]):
+        return "📄 Invoiced (Not Paid)"
+    else:
+        return "⏳ Not Yet Invoiced"
+
+df["Payment Status"] = df.apply(get_payment_status, axis=1)
+df_all["Payment Status"] = df_all.apply(get_payment_status, axis=1)
+
+if sel_payment: df = df[df["Payment Status"].isin(sel_payment)]
 
 if not sel_years:
     st.warning("⚠️ Select at least one year from the sidebar.")
@@ -261,6 +304,31 @@ with tab1:
         <p style="font-size:12px;font-weight:700;color:#DC2626;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px 0">🔴 LESS THAN 5%</p>
         <p style="font-size:44px;font-weight:800;color:#7F1D1D;margin:0;line-height:1">{below_n:,}</p>
         <p style="font-size:14px;color:#991B1B;margin:8px 0 0 0;font-weight:500">{pct_c:.1f}% of total projects</p></div>''', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Payment status summary
+    paid_n     = (df["Payment Status"] == "✅ Fully Paid").sum()
+    invoiced_n = (df["Payment Status"] == "📄 Invoiced (Not Paid)").sum()
+    pending_n  = (df["Payment Status"] == "⏳ Not Yet Invoiced").sum()
+
+    st.markdown("#### 💳 Payment Status Overview")
+    p1, p2, p3, p4, p5 = st.columns(5)
+    p1.metric("✅ Fully Paid",        f"{paid_n:,}",     f"{paid_n/total_proj*100:.1f}%")
+    p2.metric("📄 Invoiced (Not Paid)", f"{invoiced_n:,}", f"{invoiced_n/total_proj*100:.1f}%")
+    p3.metric("⏳ Not Yet Invoiced",   f"{pending_n:,}",  f"{pending_n/total_proj*100:.1f}%")
+
+    # Account state summary
+    st.markdown("#### 📂 Account State Overview")
+    s1, s2, s3, s4 = st.columns(4)
+    open_n      = (df["State"] == "Open").sum()
+    validated_n = (df["State"] == "Validated").sum()
+    submitted_n = (df["State"] == "Submitted").sum()
+    cancelled_n = (df["State"] == "Cancelled").sum()
+    s1.metric("🟢 Open",       f"{open_n:,}",      f"{open_n/total_proj*100:.1f}% of total")
+    s2.metric("✅ Validated",  f"{validated_n:,}",  f"{validated_n/total_proj*100:.1f}% of total")
+    s3.metric("📤 Submitted",  f"{submitted_n:,}",  f"{submitted_n/total_proj*100:.1f}% of total")
+    s4.metric("❌ Cancelled",  f"{cancelled_n:,}",  f"{cancelled_n/total_proj*100:.1f}% of total")
 
     st.markdown("---")
 
@@ -504,7 +572,7 @@ with tab2:
     search = st.text_input("🔍 Search projects",
                            placeholder="Filter by account or customer...",
                            label_visibility="collapsed")
-    tbl = df_sp[["Analytic Account","Customer","State","Year",
+    tbl = df_sp[["Analytic Account","Customer","State","Payment Status","Year",
                  "Theoretical Margin","Real Margin","Deviation",
                  "Category","Paid SM Bool","Paid SM Amount"]].copy()
     tbl["Deviation %"] = (tbl["Deviation"]*100).round(2)
@@ -513,6 +581,20 @@ with tab2:
     tbl.rename(columns={"Theoretical Margin":"Theoretical (€)",
                         "Real Margin":"Real (€)",
                         "Paid SM Amount":"SMS Amount (€)"},inplace=True)
+
+    # Color the Payment Status column
+    def style_payment(v):
+        if "Fully Paid"       in str(v): return "color:#15803D;font-weight:600"
+        if "Invoiced"         in str(v): return "color:#D97706;font-weight:600"
+        if "Not Yet Invoiced" in str(v): return "color:#DC2626;font-weight:600"
+        return ""
+
+    def style_state(v):
+        if v == "Validated": return "color:#15803D;font-weight:600"
+        if v == "Open":      return "color:#2563EB;font-weight:600"
+        if v == "Submitted": return "color:#D97706;font-weight:600"
+        if v == "Cancelled": return "color:#DC2626;font-weight:600"
+        return ""
     if search:
         mask = (tbl["Analytic Account"].str.contains(search,case=False,na=False)|
                 tbl["Customer"].str.contains(search,case=False,na=False))
@@ -534,7 +616,9 @@ with tab2:
         except: return ""
 
     styled = (tbl.style.apply(row_style,axis=1)
-              .map(dev_style,subset=["Deviation %"])
+              .map(dev_style,     subset=["Deviation %"])
+              .map(style_payment, subset=["Payment Status"])
+              .map(style_state,   subset=["State"])
               .format({"Theoretical (€)":"€{:,.2f}","Real (€)":"€{:,.2f}",
                        "SMS Amount (€)":"€{:,.2f}","Deviation %":"{:+.2f}%"},na_rep="—"))
     st.dataframe(styled, use_container_width=True,
