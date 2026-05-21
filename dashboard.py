@@ -11,7 +11,7 @@ st.markdown("""<style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 #MainMenu,footer,header{visibility:hidden;}
-.stApp{background:#F4F6FB;}
+.stApp{background:#F0F2F8;}
 section[data-testid="stSidebar"]{background:#1A1F36;}
 section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] .stMarkdown p,
@@ -22,7 +22,12 @@ section[data-testid="stSidebar"] h3{color:#fff !important;}
 .stTabs [data-baseweb="tab-list"]{background:#fff;border-radius:12px;padding:5px;border:1px solid #E2E8F0;gap:4px;}
 .stTabs [data-baseweb="tab"]{border-radius:9px;padding:9px 28px;font-weight:600;font-size:14px;color:#64748B;}
 .stTabs [aria-selected="true"]{background:#1A1F36 !important;color:#fff !important;}
-div[data-testid="stMetric"]{background:white;border-radius:14px;padding:20px;border:1px solid #E8EDF5;}
+div[data-testid="stMetric"]{background:white;border-radius:14px;padding:20px;border:1px solid #E8EDF5;box-shadow:0 2px 8px rgba(0,0,0,0.06);}
+div[data-testid="stMetricValue"]{font-size:28px !important;font-weight:800 !important;color:#1A1F36 !important;}
+div[data-testid="stMetricLabel"]{font-size:13px !important;font-weight:600 !important;color:#64748B !important;}
+div[data-testid="stMetricDelta"]{font-size:12px !important;}
+div[data-testid="stAlert"]{border-radius:14px !important;padding:20px 24px !important;border:none !important;box-shadow:0 2px 8px rgba(0,0,0,0.06);}
+div[data-testid="stAlert"] p{font-size:15px !important;}
 </style>""", unsafe_allow_html=True)
 
 @st.cache_data
@@ -48,7 +53,86 @@ def load_data():
     df["Year"] = df["Year"].astype("Int64")
     return df
 
-df_all = load_data()
+# ── LOGIN ──────────────────────────────────────
+USERS = {
+    "admin":   "texpak2024",
+    "usman":   "dashboard123",
+    "manager": "margin2024",
+}
+
+def check_login():
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if "username" not in st.session_state:
+        st.session_state.username = ""
+
+check_login()
+
+if not st.session_state.logged_in:
+    st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
+    col_l, col_m, col_r = st.columns([1, 1.2, 1])
+    with col_m:
+        st.markdown("""
+        <div style='background:white;border-radius:20px;padding:40px 36px;
+                    box-shadow:0 8px 32px rgba(0,0,0,0.12);text-align:center;
+                    border:1px solid #E2E8F0'>
+            <div style='font-size:48px;margin-bottom:8px'>📊</div>
+            <h2 style='font-size:22px;font-weight:800;color:#1A1F36;margin:0 0 6px 0'>
+                Salesperson Dashboard</h2>
+            <p style='color:#64748B;font-size:14px;margin:0 0 28px 0'>
+                Please sign in to continue</p>
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        username = st.text_input("👤 Username", placeholder="Enter username")
+        password = st.text_input("🔑 Password", type="password", placeholder="Enter password")
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+        if st.button("🔓 Sign In", use_container_width=True, type="primary"):
+            if username in USERS and USERS[username] == password:
+                st.session_state.logged_in = True
+                st.session_state.username  = username
+                st.rerun()
+            else:
+                st.error("❌ Incorrect username or password. Please try again.")
+
+        st.markdown("""
+        <div style='margin-top:16px;padding:12px;background:#F8FAFC;border-radius:10px;
+                    border:1px solid #E2E8F0;font-size:12px;color:#64748B;text-align:center'>
+            🔒 Secure access · Contact admin for credentials
+        </div>""", unsafe_allow_html=True)
+    st.stop()
+
+# ── FILE UPLOAD & DATA LOADING ───────────────
+@st.cache_data
+def process_data(file_bytes):
+    import io
+    df = pd.read_excel(io.BytesIO(file_bytes))
+    df["_date"] = df["Sale Fully Invoiced Date"].fillna(df["Date Validated"])
+    df["Year"] = df["_date"].dt.year
+    df = df.dropna(subset=["Salesperson"])
+    df = df[df["Salesperson"].str.strip() != ""]
+    for col in ["Theoretical Margin","Real Margin","Paid SM Amount"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df["Paid SM"] = pd.to_numeric(df["Paid SM"], errors="coerce").fillna(0).astype(int)
+    df["Paid SM Bool"] = df["Paid SM"] == 1
+    theo_abs = df["Theoretical Margin"].abs()
+    df["Deviation"] = np.where(theo_abs < 1e-9, np.nan,
+        (df["Real Margin"] - df["Theoretical Margin"]) / theo_abs)
+    def cat(d):
+        if pd.isna(d): return "Within Range (±5%)"
+        if d > 0.05:   return "Above 5%"
+        if d < -0.05:  return "Less than 5%"
+        return "Within Range (±5%)"
+    df["Category"] = df["Deviation"].apply(cat)
+    df["Year"] = df["Year"].astype("Int64")
+    return df
+
+# Use uploaded file if available, else use default
+if "uploaded_bytes" in st.session_state and st.session_state.uploaded_bytes is not None:
+    df_all = process_data(st.session_state.uploaded_bytes)
+else:
+    df_all = load_data()
 COLORS    = {"Above 5%":"#16A34A","Within Range (±5%)":"#2563EB","Less than 5%":"#DC2626"}
 CAT_ORDER = ["Above 5%","Within Range (±5%)","Less than 5%"]
 CHART_CFG = dict(font_family="Inter",paper_bgcolor="rgba(0,0,0,0)",
@@ -61,7 +145,50 @@ def fmt(v):
 
 # ── SIDEBAR ──
 with st.sidebar:
+    # User info + logout
+    st.markdown(f"""
+    <div style='background:#252D47;border-radius:12px;padding:14px 16px;margin-bottom:4px'>
+        <div style='font-size:11px;color:#6B7FA3;font-weight:600;text-transform:uppercase;
+                    letter-spacing:.06em;margin-bottom:4px'>Logged in as</div>
+        <div style='font-size:15px;font-weight:700;color:#FFFFFF'>
+            👤 {st.session_state.username}</div>
+    </div>""", unsafe_allow_html=True)
+    if st.button("🚪 Sign Out", use_container_width=True):
+        st.session_state.logged_in = False
+        st.session_state.username  = ""
+        st.rerun()
+
+    st.markdown("---")
     st.markdown("## 📊 Dashboard Controls")
+    st.markdown("---")
+
+    # File upload
+    st.markdown("### 📤 Update Data")
+    uploaded_file = st.file_uploader(
+        "Upload new Excel file",
+        type=["xlsx","xls"],
+        help="Upload a new version of the data file to refresh the dashboard",
+        label_visibility="collapsed"
+    )
+    if uploaded_file is not None:
+        file_bytes = uploaded_file.read()
+        if ("uploaded_bytes" not in st.session_state or
+                st.session_state.uploaded_bytes != file_bytes):
+            st.session_state.uploaded_bytes = file_bytes
+            process_data.clear()
+            st.success(f"✅ {uploaded_file.name} loaded!")
+            st.rerun()
+    else:
+        if "uploaded_bytes" not in st.session_state:
+            st.session_state.uploaded_bytes = None
+        st.caption("📁 Using default data file")
+
+    if st.session_state.get("uploaded_bytes"):
+        if st.button("🔄 Reset to Default Data", use_container_width=True):
+            st.session_state.uploaded_bytes = None
+            process_data.clear()
+            st.rerun()
+
     st.markdown("---")
     years_avail = sorted(df_all["Year"].dropna().unique().tolist(), reverse=True)
     sel_years = st.multiselect("📅 Year(s)", years_avail,
@@ -120,11 +247,20 @@ with tab1:
 
     ca, cb, cc = st.columns(3)
     with ca:
-        st.success(f"### 🟢 Above 5%\n# {above_n:,}\n**{pct_a:.1f}% of total projects**")
+        st.markdown(f'''<div style="background:#D1FAE5;border-radius:16px;padding:24px 28px;border-left:6px solid #16A34A;box-shadow:0 2px 8px rgba(0,0,0,0.07)">
+        <p style="font-size:12px;font-weight:700;color:#15803D;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px 0">🟢 ABOVE 5%</p>
+        <p style="font-size:44px;font-weight:800;color:#14532D;margin:0;line-height:1">{above_n:,}</p>
+        <p style="font-size:14px;color:#166534;margin:8px 0 0 0;font-weight:500">{pct_a:.1f}% of total projects</p></div>''', unsafe_allow_html=True)
     with cb:
-        st.info(f"### 🔵 Within ±5%\n# {within_n:,}\n**{pct_b:.1f}% of total projects**")
+        st.markdown(f'''<div style="background:#DBEAFE;border-radius:16px;padding:24px 28px;border-left:6px solid #2563EB;box-shadow:0 2px 8px rgba(0,0,0,0.07)">
+        <p style="font-size:12px;font-weight:700;color:#1D4ED8;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px 0">🔵 WITHIN ±5%</p>
+        <p style="font-size:44px;font-weight:800;color:#1E3A8A;margin:0;line-height:1">{within_n:,}</p>
+        <p style="font-size:14px;color:#1E40AF;margin:8px 0 0 0;font-weight:500">{pct_b:.1f}% of total projects</p></div>''', unsafe_allow_html=True)
     with cc:
-        st.error(f"### 🔴 Less than 5%\n# {below_n:,}\n**{pct_c:.1f}% of total projects**")
+        st.markdown(f'''<div style="background:#FEE2E2;border-radius:16px;padding:24px 28px;border-left:6px solid #DC2626;box-shadow:0 2px 8px rgba(0,0,0,0.07)">
+        <p style="font-size:12px;font-weight:700;color:#DC2626;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px 0">🔴 LESS THAN 5%</p>
+        <p style="font-size:44px;font-weight:800;color:#7F1D1D;margin:0;line-height:1">{below_n:,}</p>
+        <p style="font-size:14px;color:#991B1B;margin:8px 0 0 0;font-weight:500">{pct_c:.1f}% of total projects</p></div>''', unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -257,11 +393,20 @@ with tab2:
     # Category cards
     ca,cb,cc = st.columns(3)
     with ca:
-        st.success(f"### 🟢 Above 5%\n# {sp_above:,}\n**{sp_above/sp_total*100:.1f}% of total**")
+        st.markdown(f'''<div style="background:#D1FAE5;border-radius:16px;padding:24px 28px;border-left:6px solid #16A34A;box-shadow:0 2px 8px rgba(0,0,0,0.07)">
+        <p style="font-size:12px;font-weight:700;color:#15803D;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px 0">🟢 ABOVE 5%</p>
+        <p style="font-size:44px;font-weight:800;color:#14532D;margin:0;line-height:1">{sp_above:,}</p>
+        <p style="font-size:14px;color:#166534;margin:8px 0 0 0;font-weight:500">{sp_above/sp_total*100:.1f}% of total</p></div>''', unsafe_allow_html=True)
     with cb:
-        st.info(f"### 🔵 Within ±5%\n# {sp_within:,}\n**{sp_within/sp_total*100:.1f}% of total**")
+        st.markdown(f'''<div style="background:#DBEAFE;border-radius:16px;padding:24px 28px;border-left:6px solid #2563EB;box-shadow:0 2px 8px rgba(0,0,0,0.07)">
+        <p style="font-size:12px;font-weight:700;color:#1D4ED8;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px 0">🔵 WITHIN ±5%</p>
+        <p style="font-size:44px;font-weight:800;color:#1E3A8A;margin:0;line-height:1">{sp_within:,}</p>
+        <p style="font-size:14px;color:#1E40AF;margin:8px 0 0 0;font-weight:500">{sp_within/sp_total*100:.1f}% of total</p></div>''', unsafe_allow_html=True)
     with cc:
-        st.error(f"### 🔴 Less than 5%\n# {sp_below:,}\n**{sp_below/sp_total*100:.1f}% of total**")
+        st.markdown(f'''<div style="background:#FEE2E2;border-radius:16px;padding:24px 28px;border-left:6px solid #DC2626;box-shadow:0 2px 8px rgba(0,0,0,0.07)">
+        <p style="font-size:12px;font-weight:700;color:#DC2626;text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px 0">🔴 LESS THAN 5%</p>
+        <p style="font-size:44px;font-weight:800;color:#7F1D1D;margin:0;line-height:1">{sp_below:,}</p>
+        <p style="font-size:14px;color:#991B1B;margin:8px 0 0 0;font-weight:500">{sp_below/sp_total*100:.1f}% of total</p></div>''', unsafe_allow_html=True)
 
     st.markdown("---")
 
